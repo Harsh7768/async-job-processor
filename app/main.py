@@ -79,7 +79,7 @@ def process_job():
     cur = conn.cursor()
 
     try:
-        # STEP 1: Pick ONE pending job and lock it
+        # Safely pick a job using row-level locking to avoid duplicate processing
         cur.execute(
             """
             SELECT id, type, payload
@@ -95,24 +95,22 @@ def process_job():
 
         job = cur.fetchone()
 
-        # STEP 2: No job case
         if not job:
             return {"message": "No jobs available"}
 
         job_id, job_type, payload = job
 
-        # STEP 3: Mark job as processing
+        # Mark job as processing
         cur.execute(
             "UPDATE jobs SET status = 'processing' WHERE id = %s;",
             (job_id,)
         )
         conn.commit()
 
-        # STEP 4: Simulate processing
-        print(f"Processing job {job_id}")
+        # Simulate processing
+        print(f"[WORKER] Processing job {job_id} of type {job_type}")
 
-
-        # STEP 5: Mark as completed
+        # Mark as completed
         cur.execute(
             "UPDATE jobs SET status = 'completed' WHERE id = %s;",
             (job_id,)
@@ -122,21 +120,20 @@ def process_job():
     except Exception as e:
         conn.rollback()
 
-        # STEP 6: Mark failed with retry + backoff
+        # Retry failed jobs with delay (backoff) and limited attempts
         if 'job_id' in locals():
-          cur.execute(
-            """
-            UPDATE jobs
-            SET 
-                status = 'failed',
-                attempts = attempts + 1,
-                next_run_at = CURRENT_TIMESTAMP + INTERVAL '10 seconds'
-            WHERE id = %s;
-              """,
-            (job_id,)
-        )
-
-        conn.commit()
+            cur.execute(
+                """
+                UPDATE jobs
+                SET 
+                    status = 'failed',
+                    attempts = attempts + 1,
+                    next_run_at = CURRENT_TIMESTAMP + INTERVAL '10 seconds'
+                WHERE id = %s;
+                """,
+                (job_id,)
+            )
+            conn.commit()
 
         raise e
 
